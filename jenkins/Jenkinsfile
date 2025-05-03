@@ -1,0 +1,92 @@
+pipeline {
+    agent any
+    
+    environment {
+        AWS_REGION = 'us-east-1'
+        TERRAFORM_DIR = 'terraform'
+        APP_NAME = 'travelmemory'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                // Checkout the code from the repository
+                checkout scm
+            }
+        }
+        
+        stage('Validate Infrastructure') {
+            steps {
+                dir("${TERRAFORM_DIR}") {
+                    // Initialize Terraform
+                    sh 'terraform init'
+                    
+                    // Validate Terraform configuration
+                    sh 'terraform validate'
+                    
+                    // Plan Terraform changes
+                    sh 'terraform plan -out=tfplan'
+                }
+            }
+        }
+        
+        stage('Deploy Infrastructure') {
+            steps {
+                dir("${TERRAFORM_DIR}") {
+                    // Apply Terraform changes
+                    sh 'terraform apply -auto-approve tfplan'
+                    
+                    // Store outputs for later use
+                    script {
+                        env.BACKEND_URL = sh(script: 'terraform output -raw backend_url', returnStdout: true).trim()
+                        env.FRONTEND_URL = sh(script: 'terraform output -raw frontend_url', returnStdout: true).trim()
+                    }
+                }
+            }
+        }
+        
+        stage('Test Backend') {
+            steps {
+                // Wait for backend to be ready
+                sh 'sleep 60'
+                
+                // Test backend API
+                sh "curl -f ${env.BACKEND_URL}/hello || exit 1"
+            }
+        }
+        
+        stage('Test Frontend') {
+            steps {
+                // Wait for frontend to be ready
+                sh 'sleep 30'
+                
+                // Test frontend accessibility
+                sh "curl -f ${env.FRONTEND_URL} || exit 1"
+            }
+        }
+        
+        stage('Security Scan') {
+            steps {
+                // Run security scan on infrastructure
+                echo 'Running security scan...'
+                // This would typically use a tool like Terrascan, tfsec, or similar
+                // sh 'terrascan scan -d ${TERRAFORM_DIR}'
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "Deployment successful! Application is available at: ${env.FRONTEND_URL}"
+        }
+        failure {
+            echo 'Deployment failed!'
+            
+            // Option to destroy infrastructure on failure
+            // Uncomment to enable automatic teardown on failure
+            // dir("${TERRAFORM_DIR}") {
+            //     sh 'terraform destroy -auto-approve'
+            // }
+        }
+    }
+}
